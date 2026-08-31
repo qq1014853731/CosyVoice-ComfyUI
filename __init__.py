@@ -1,10 +1,9 @@
 from .nodes import TextNode, CosyVoiceNode, LoadSRT, CosyVoiceDubbingNode
 from .persistent_voice_nodes import (
-    CosyVoiceExtractZeroShotVoiceNode,
+    CosyVoiceExtractVoiceNode,
     CosyVoiceSaveVoiceNode,
     CosyVoiceLoadVoiceNode,
-    CosyVoiceZeroShotVoiceTTSNode,
-    CosyVoiceCrossLingualVoiceTTSNode,
+    CosyVoiceVoiceTTSNode,
 )
 
 WEB_DIRECTORY = "./web"
@@ -14,19 +13,17 @@ NODE_CLASS_MAPPINGS = {
     "TextNode": TextNode,
     "CosyVoiceNode": CosyVoiceNode,
     "CosyVoiceDubbingNode": CosyVoiceDubbingNode,
-    "CosyVoiceExtractZeroShotVoiceNode": CosyVoiceExtractZeroShotVoiceNode,
+    "CosyVoiceExtractVoiceNode": CosyVoiceExtractVoiceNode,
     "CosyVoiceSaveVoiceNode": CosyVoiceSaveVoiceNode,
     "CosyVoiceLoadVoiceNode": CosyVoiceLoadVoiceNode,
-    "CosyVoiceZeroShotVoiceTTSNode": CosyVoiceZeroShotVoiceTTSNode,
-    "CosyVoiceCrossLingualVoiceTTSNode": CosyVoiceCrossLingualVoiceTTSNode,
+    "CosyVoiceVoiceTTSNode": CosyVoiceVoiceTTSNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "CosyVoiceExtractZeroShotVoiceNode": "CosyVoice - Extract Zero-shot Voice",
+    "CosyVoiceExtractVoiceNode": "CosyVoice - Extract Voice",
     "CosyVoiceSaveVoiceNode": "CosyVoice - Save Voice",
     "CosyVoiceLoadVoiceNode": "CosyVoice - Load Voice",
-    "CosyVoiceZeroShotVoiceTTSNode": "CosyVoice - Zero-shot Voice TTS",
-    "CosyVoiceCrossLingualVoiceTTSNode": "CosyVoice - Cross-lingual Voice TTS",
+    "CosyVoiceVoiceTTSNode": "CosyVoice - Voice TTS",
 }
 
 __all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]

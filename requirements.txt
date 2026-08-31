@@ -12,14 +12,20 @@ matplotlib
 modelscope
 networkx
 omegaconf
+onnx
 onnxruntime-gpu; sys_platform == 'linux'
 onnxruntime; sys_platform == 'darwin' or sys_platform == 'win32'
 openai-whisper
 protobuf
 pydantic
+pyworld
 rich
 soundfile
 tensorboard
+transformers>=4.51,<5
+x-transformers>=2.11,<3
+wetext
+tqdm
 wget
 gdown
 pyarrow

@@ -12,6 +12,29 @@ input
 output
 
 
+## Persistent voice
+This fork also supports extracting and reusing CosyVoice voice conditioning without processing the reference audio on every generation.
+
+### Zero-shot voice
+Requires both `prompt_text` and `prompt_wav`. The text should match what is spoken in the reference audio.
+
+`Load Audio + prompt_text -> CosyVoice - Extract Zero-shot Voice -> CosyVoice - Save Voice`
+
+Reuse with:
+
+`CosyVoice - Load Voice -> CosyVoice - Zero-shot Voice TTS`
+
+### Cross-lingual voice
+Requires only `prompt_wav`; `prompt_text` is not required.
+
+`Load Audio -> CosyVoice - Extract Cross-lingual Voice -> CosyVoice - Save Voice`
+
+Reuse with:
+
+`CosyVoice - Load Voice -> CosyVoice - Cross-lingual Voice TTS`
+
+Saved `.pt` voice files contain CosyVoice-specific conditioning and are not a universal speaker embedding format.
+
 ## Example
 test on 2080ti 11GB torch==2.3.0+cu121 python 3.10.8
 use case | tts_text | prompt_text | prompt_wav | instruct_text | output 

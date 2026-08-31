@@ -23,11 +23,12 @@ class _CosyVoiceLoader:
         self.model_dir = None
         self.cosyvoice = None
 
-    def get(self):
-        model_dir = os.path.join(pretrained_models, "CosyVoice-300M")
+    def get(self, instruct=False):
+        model_name = "CosyVoice-300M-Instruct" if instruct else "CosyVoice-300M"
+        model_dir = os.path.join(pretrained_models, model_name)
         if self.cosyvoice is None or self.model_dir != model_dir:
             from modelscope import snapshot_download
-            snapshot_download(model_id="iic/CosyVoice-300M", local_dir=model_dir)
+            snapshot_download(model_id=f"iic/{model_name}", local_dir=model_dir)
             self.cosyvoice = CosyVoice(model_dir)
             self.model_dir = model_dir
         return self.cosyvoice
@@ -49,7 +50,6 @@ def _output_dir() -> str:
 
 
 def _voice_mode(voice: Dict[str, Any]) -> str:
-    # 兼容第一版生成的 zero-shot .pt：当时没有 mode 字段。
     return voice.get("mode", VOICE_MODE_ZERO_SHOT)
 
 
@@ -96,7 +96,6 @@ def _load_voice_file(path: str) -> Dict[str, Any]:
     try:
         voice = torch.load(path, map_location="cpu", weights_only=True)
     except TypeError:
-        # 兼容不支持 weights_only 参数的旧版 PyTorch。
         voice = torch.load(path, map_location="cpu")
     _validate_voice(voice)
     return _cpu_voice(voice)
@@ -225,12 +224,8 @@ class CosyVoiceExtractVoiceNode:
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {
-                "prompt_wav": ("AUDIO",),
-            },
-            "optional": {
-                "prompt_text": ("STRING", {"multiline": True, "default": ""}),
-            },
+            "required": {"prompt_wav": ("AUDIO",)},
+            "optional": {"prompt_text": ("STRING", {"multiline": True, "default": ""})},
         }
 
     RETURN_TYPES = (VOICE_TYPE,)
@@ -241,7 +236,7 @@ class CosyVoiceExtractVoiceNode:
 
     @torch.no_grad()
     def extract(self, prompt_wav, prompt_text=""):
-        cosyvoice = _GLOBAL_LOADER.get()
+        cosyvoice = _GLOBAL_LOADER.get(instruct=False)
         prompt_text = (prompt_text or "").strip()
         prompt_speech_16k = _audio_to_16k(prompt_wav)
 
@@ -318,42 +313,71 @@ class CosyVoiceLoadVoiceNode:
 class CosyVoiceVoiceTTSNode:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {
-            "tts_text": ("STRING", {"multiline": True, "default": "你好，这是使用已保存音色生成的语音。"}),
-            "voice": (VOICE_TYPE,),
-            "speed": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05}),
-            "seed": ("INT", {"default": 42}),
-        }}
+        return {
+            "required": {
+                "tts_text": ("STRING", {"multiline": True, "default": "你好，这是使用已保存音色生成的语音。"}),
+                "voice": (VOICE_TYPE,),
+                "speed": ("FLOAT", {"default": 1.0, "min": 0.5, "max": 2.0, "step": 0.05}),
+                "seed": ("INT", {"default": 42}),
+            },
+            "optional": {
+                "instruct_text": ("STRING", {"multiline": True, "default": ""}),
+            },
+        }
 
     RETURN_TYPES = ("AUDIO",)
     RETURN_NAMES = ("audio",)
     FUNCTION = "generate"
     CATEGORY = "AIFSH_CosyVoice/voice"
-    DESCRIPTION = "使用持久化 CosyVoice 音色生成语音，并根据音色 mode 自动使用 zero-shot 或 cross-lingual conditioning。"
+    DESCRIPTION = "使用持久化 CosyVoice 音色生成语音。instruct_text 为空时使用 zero-shot/cross-lingual；有值时自动切换 Instruct 模型。"
 
     @torch.no_grad()
-    def generate(self, tts_text, voice, speed, seed):
+    def generate(self, tts_text, voice, speed, seed, instruct_text=""):
         _validate_voice(voice)
-        cosyvoice = _GLOBAL_LOADER.get()
+        instruct_text = (instruct_text or "").strip()
+        cosyvoice = _GLOBAL_LOADER.get(instruct=bool(instruct_text))
         device = cosyvoice.model.device
         set_all_random_seed(seed)
 
-        conditioning = {
-            key: value.to(device) if isinstance(value, torch.Tensor) else value
-            for key, value in voice.items()
-            if key not in {"format", "format_version", "model", "mode"}
-        }
-
         output_list = []
-        for text in cosyvoice.frontend.text_normalize(tts_text, split=True):
-            text_token, text_token_len = cosyvoice.frontend._extract_text_token(text)
-            model_input = {"text": text_token, "text_len": text_token_len, **conditioning}
-            for out_dict in cosyvoice.model.inference(**model_input, stream=False):
-                output_numpy = out_dict["tts_speech"].squeeze(0).numpy() * 32768
-                output_numpy = output_numpy.astype("int16")
-                if speed != 1.0:
-                    output_numpy = speed_change(output_numpy, speed, target_sr)
-                output_list.append(torch.tensor(output_numpy / 32768.0, dtype=torch.float32).unsqueeze(0))
+        if instruct_text:
+            normalized_instruct = cosyvoice.frontend.text_normalize(instruct_text, split=False)
+            instruct_token, instruct_token_len = cosyvoice.frontend._extract_text_token(
+                normalized_instruct + "<endofprompt>"
+            )
+            flow_embedding = voice["flow_embedding"].to(device)
+
+            for text in cosyvoice.frontend.text_normalize(tts_text, split=True):
+                text_token, text_token_len = cosyvoice.frontend._extract_text_token(text)
+                model_input = {
+                    "text": text_token,
+                    "text_len": text_token_len,
+                    "prompt_text": instruct_token.to(device),
+                    "prompt_text_len": instruct_token_len.to(device),
+                    "flow_embedding": flow_embedding,
+                }
+                for out_dict in cosyvoice.model.inference(**model_input, stream=False):
+                    output_numpy = out_dict["tts_speech"].squeeze(0).numpy() * 32768
+                    output_numpy = output_numpy.astype("int16")
+                    if speed != 1.0:
+                        output_numpy = speed_change(output_numpy, speed, target_sr)
+                    output_list.append(torch.tensor(output_numpy / 32768.0, dtype=torch.float32).unsqueeze(0))
+        else:
+            conditioning = {
+                key: value.to(device) if isinstance(value, torch.Tensor) else value
+                for key, value in voice.items()
+                if key not in {"format", "format_version", "model", "mode"}
+            }
+
+            for text in cosyvoice.frontend.text_normalize(tts_text, split=True):
+                text_token, text_token_len = cosyvoice.frontend._extract_text_token(text)
+                model_input = {"text": text_token, "text_len": text_token_len, **conditioning}
+                for out_dict in cosyvoice.model.inference(**model_input, stream=False):
+                    output_numpy = out_dict["tts_speech"].squeeze(0).numpy() * 32768
+                    output_numpy = output_numpy.astype("int16")
+                    if speed != 1.0:
+                        output_numpy = speed_change(output_numpy, speed, target_sr)
+                    output_list.append(torch.tensor(output_numpy / 32768.0, dtype=torch.float32).unsqueeze(0))
 
         if not output_list:
             raise ValueError("没有生成任何音频")

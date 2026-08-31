@@ -225,24 +225,27 @@ async def cosyvoice_upload_voice(request):
 class CosyVoiceExtractZeroShotVoiceNode:
     @classmethod
     def INPUT_TYPES(cls):
-        return {"required": {
-            "prompt_text": ("STRING", {"multiline": True, "default": ""}),
-            "prompt_wav": ("AUDIO",),
-        }}
+        return {
+            "required": {
+                "prompt_wav": ("AUDIO",),
+            },
+            "optional": {
+                "prompt_text": ("STRING", {"multiline": True, "default": ""}),
+            },
+        }
 
     RETURN_TYPES = (VOICE_TYPE,)
     RETURN_NAMES = ("voice",)
     FUNCTION = "extract"
     CATEGORY = "AIFSH_CosyVoice/voice"
-    DESCRIPTION = "提取 CosyVoice zero-shot 音色。prompt_text 必须与参考音频内容匹配。"
+    DESCRIPTION = "提取 CosyVoice zero-shot 音色。prompt_text 可选；提供时应与参考音频内容匹配。"
 
     @torch.no_grad()
-    def extract(self, prompt_text, prompt_wav):
-        if not prompt_text or not prompt_text.strip():
-            raise ValueError("prompt_text 不能为空，zero-shot 音色需要参考音频对应文本")
-
+    def extract(self, prompt_wav, prompt_text=""):
         cosyvoice = _GLOBAL_LOADER.get()
-        prompt_text = cosyvoice.frontend.text_normalize(prompt_text, split=False)
+        prompt_text = (prompt_text or "").strip()
+        if prompt_text:
+            prompt_text = cosyvoice.frontend.text_normalize(prompt_text, split=False)
         prompt_speech_16k = _audio_to_16k(prompt_wav)
         model_input = cosyvoice.frontend.frontend_zero_shot("", prompt_text, prompt_speech_16k)
         return (_make_voice(model_input, VOICE_MODE_ZERO_SHOT),)
@@ -383,7 +386,7 @@ class _CosyVoicePersistentTTSBase:
 
 class CosyVoiceZeroShotVoiceTTSNode(_CosyVoicePersistentTTSBase):
     mode = VOICE_MODE_ZERO_SHOT
-    DESCRIPTION = "使用持久化 zero-shot 音色生成语音；音色创建时需要 prompt_text + prompt_wav。"
+    DESCRIPTION = "使用持久化 zero-shot 音色生成语音；创建音色时 prompt_text 可选。"
 
 
 class CosyVoiceCrossLingualVoiceTTSNode(_CosyVoicePersistentTTSBase):

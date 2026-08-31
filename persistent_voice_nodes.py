@@ -238,17 +238,23 @@ class CosyVoiceExtractZeroShotVoiceNode:
     RETURN_NAMES = ("voice",)
     FUNCTION = "extract"
     CATEGORY = "AIFSH_CosyVoice/voice"
-    DESCRIPTION = "提取 CosyVoice zero-shot 音色。prompt_text 可选；提供时应与参考音频内容匹配。"
+    DESCRIPTION = "提取 CosyVoice 音色。提供 prompt_text 时使用 zero-shot；为空时自动使用 cross-lingual conditioning。"
 
     @torch.no_grad()
     def extract(self, prompt_wav, prompt_text=""):
         cosyvoice = _GLOBAL_LOADER.get()
         prompt_text = (prompt_text or "").strip()
+        prompt_speech_16k = _audio_to_16k(prompt_wav)
+
         if prompt_text:
             prompt_text = cosyvoice.frontend.text_normalize(prompt_text, split=False)
-        prompt_speech_16k = _audio_to_16k(prompt_wav)
-        model_input = cosyvoice.frontend.frontend_zero_shot("", prompt_text, prompt_speech_16k)
-        return (_make_voice(model_input, VOICE_MODE_ZERO_SHOT),)
+            model_input = cosyvoice.frontend.frontend_zero_shot("", prompt_text, prompt_speech_16k)
+            mode = VOICE_MODE_ZERO_SHOT
+        else:
+            model_input = cosyvoice.frontend.frontend_cross_lingual("", prompt_speech_16k)
+            mode = VOICE_MODE_CROSS_LINGUAL
+
+        return (_make_voice(model_input, mode),)
 
 
 class CosyVoiceExtractCrossLingualVoiceNode:
@@ -266,14 +272,7 @@ class CosyVoiceExtractCrossLingualVoiceNode:
     def extract(self, prompt_wav):
         cosyvoice = _GLOBAL_LOADER.get()
         prompt_speech_16k = _audio_to_16k(prompt_wav)
-
-        # 与官方 frontend_cross_lingual() 保持一致：先构造 zero-shot conditioning，
-        # 再移除 LLM 侧的 prompt text / prompt speech token，仅保留跨语种推理需要的条件。
-        model_input = cosyvoice.frontend.frontend_zero_shot("", "", prompt_speech_16k)
-        model_input.pop("prompt_text", None)
-        model_input.pop("prompt_text_len", None)
-        model_input.pop("llm_prompt_speech_token", None)
-        model_input.pop("llm_prompt_speech_token_len", None)
+        model_input = cosyvoice.frontend.frontend_cross_lingual("", prompt_speech_16k)
         return (_make_voice(model_input, VOICE_MODE_CROSS_LINGUAL),)
 
 
@@ -385,8 +384,9 @@ class _CosyVoicePersistentTTSBase:
 
 
 class CosyVoiceZeroShotVoiceTTSNode(_CosyVoicePersistentTTSBase):
-    mode = VOICE_MODE_ZERO_SHOT
-    DESCRIPTION = "使用持久化 zero-shot 音色生成语音；创建音色时 prompt_text 可选。"
+    # 兼容 Extract Zero-shot Voice 在 prompt_text 为空时生成的 cross-lingual fallback voice。
+    mode = None
+    DESCRIPTION = "使用持久化音色生成语音；兼容 zero-shot 和 prompt_text 为空时的 cross-lingual fallback 音色。"
 
 
 class CosyVoiceCrossLingualVoiceTTSNode(_CosyVoicePersistentTTSBase):

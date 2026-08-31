@@ -49,11 +49,11 @@ def _output_dir() -> str:
 
 
 def _voice_mode(voice: Dict[str, Any]) -> str:
-    # 兼容本功能第一版生成的 zero-shot .pt：当时没有 mode 字段。
+    # 兼容第一版生成的 zero-shot .pt：当时没有 mode 字段。
     return voice.get("mode", VOICE_MODE_ZERO_SHOT)
 
 
-def _validate_voice(voice: Dict[str, Any], expected_mode: str | None = None) -> None:
+def _validate_voice(voice: Dict[str, Any]) -> None:
     if not isinstance(voice, dict):
         raise ValueError("voice 必须是 CosyVoice 音色对象")
 
@@ -66,8 +66,6 @@ def _validate_voice(voice: Dict[str, Any], expected_mode: str | None = None) -> 
     mode = _voice_mode(voice)
     if mode not in {VOICE_MODE_ZERO_SHOT, VOICE_MODE_CROSS_LINGUAL}:
         raise ValueError(f"不支持的音色模式: {mode!r}")
-    if expected_mode is not None and mode != expected_mode:
-        raise ValueError(f"音色模式不匹配: 当前为 {mode}，该节点需要 {expected_mode}")
 
     common = (
         "flow_prompt_speech_token", "flow_prompt_speech_token_len",
@@ -98,6 +96,7 @@ def _load_voice_file(path: str) -> Dict[str, Any]:
     try:
         voice = torch.load(path, map_location="cpu", weights_only=True)
     except TypeError:
+        # 兼容不支持 weights_only 参数的旧版 PyTorch。
         voice = torch.load(path, map_location="cpu")
     _validate_voice(voice)
     return _cpu_voice(voice)
@@ -177,7 +176,7 @@ def _make_voice(model_input: Dict[str, Any], mode: str) -> Dict[str, Any]:
         "mode": mode,
         **_cpu_voice(model_input),
     }
-    _validate_voice(voice, expected_mode=mode)
+    _validate_voice(voice)
     return voice
 
 
@@ -222,7 +221,7 @@ async def cosyvoice_upload_voice(request):
     return web.json_response({"name": f"input/{relative}"})
 
 
-class CosyVoiceExtractZeroShotVoiceNode:
+class CosyVoiceExtractVoiceNode:
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -247,33 +246,14 @@ class CosyVoiceExtractZeroShotVoiceNode:
         prompt_speech_16k = _audio_to_16k(prompt_wav)
 
         if prompt_text:
-            prompt_text = cosyvoice.frontend.text_normalize(prompt_text, split=False)
-            model_input = cosyvoice.frontend.frontend_zero_shot("", prompt_text, prompt_speech_16k)
+            normalized_prompt_text = cosyvoice.frontend.text_normalize(prompt_text, split=False)
+            model_input = cosyvoice.frontend.frontend_zero_shot("", normalized_prompt_text, prompt_speech_16k)
             mode = VOICE_MODE_ZERO_SHOT
         else:
             model_input = cosyvoice.frontend.frontend_cross_lingual("", prompt_speech_16k)
             mode = VOICE_MODE_CROSS_LINGUAL
 
         return (_make_voice(model_input, mode),)
-
-
-class CosyVoiceExtractCrossLingualVoiceNode:
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {"required": {"prompt_wav": ("AUDIO",)}}
-
-    RETURN_TYPES = (VOICE_TYPE,)
-    RETURN_NAMES = ("voice",)
-    FUNCTION = "extract"
-    CATEGORY = "AIFSH_CosyVoice/voice"
-    DESCRIPTION = "提取 CosyVoice cross-lingual 音色，只需要参考音频，不需要 prompt_text。"
-
-    @torch.no_grad()
-    def extract(self, prompt_wav):
-        cosyvoice = _GLOBAL_LOADER.get()
-        prompt_speech_16k = _audio_to_16k(prompt_wav)
-        model_input = cosyvoice.frontend.frontend_cross_lingual("", prompt_speech_16k)
-        return (_make_voice(model_input, VOICE_MODE_CROSS_LINGUAL),)
 
 
 class CosyVoiceSaveVoiceNode:
@@ -335,9 +315,7 @@ class CosyVoiceLoadVoiceNode:
         return (_load_voice_file(_resolve_voice_path(voice_file)),)
 
 
-class _CosyVoicePersistentTTSBase:
-    mode = None
-
+class CosyVoiceVoiceTTSNode:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
@@ -351,10 +329,11 @@ class _CosyVoicePersistentTTSBase:
     RETURN_NAMES = ("audio",)
     FUNCTION = "generate"
     CATEGORY = "AIFSH_CosyVoice/voice"
+    DESCRIPTION = "使用持久化 CosyVoice 音色生成语音，并根据音色 mode 自动使用 zero-shot 或 cross-lingual conditioning。"
 
     @torch.no_grad()
     def generate(self, tts_text, voice, speed, seed):
-        _validate_voice(voice, expected_mode=self.mode)
+        _validate_voice(voice)
         cosyvoice = _GLOBAL_LOADER.get()
         device = cosyvoice.model.device
         set_all_random_seed(seed)
@@ -381,14 +360,3 @@ class _CosyVoicePersistentTTSBase:
 
         audio = {"waveform": torch.cat(output_list, dim=1).unsqueeze(0), "sample_rate": target_sr}
         return (audio,)
-
-
-class CosyVoiceZeroShotVoiceTTSNode(_CosyVoicePersistentTTSBase):
-    # 兼容 Extract Zero-shot Voice 在 prompt_text 为空时生成的 cross-lingual fallback voice。
-    mode = None
-    DESCRIPTION = "使用持久化音色生成语音；兼容 zero-shot 和 prompt_text 为空时的 cross-lingual fallback 音色。"
-
-
-class CosyVoiceCrossLingualVoiceTTSNode(_CosyVoicePersistentTTSBase):
-    mode = VOICE_MODE_CROSS_LINGUAL
-    DESCRIPTION = "使用持久化 cross-lingual 音色生成语音；音色创建时只需要 prompt_wav。"
